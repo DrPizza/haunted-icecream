@@ -1,7 +1,5 @@
 #include "stdafx.h"
 
-#include <gsl/gsl>
-
 extern "C" {
 	void* probeArray;
 	void* timings;
@@ -12,7 +10,7 @@ extern "C" {
 	extern void _leak_exception(void* target);
 }
 
-LONG WINAPI exception_filter(_EXCEPTION_POINTERS* ep) noexcept {
+LONG WINAPI exception_filter(EXCEPTION_POINTERS* ep) noexcept {
 	ep->ContextRecord->Rip = reinterpret_cast<DWORD64>(_stopspeculate);
 	return EXCEPTION_CONTINUE_EXECUTION;
 }
@@ -24,7 +22,7 @@ void leak_branch(void*) noexcept {
 void leak_exception(void* target) noexcept {
 	__try {
 		_leak_exception(target);
-	} __except(exception_filter(GetExceptionInformation())) {
+	} __except(exception_filter(static_cast<EXCEPTION_POINTERS*>(_exception_info()))) {
 		;
 	}
 }
@@ -54,8 +52,8 @@ std::byte leak(void* target) {
 }
 
 void hex_dump(gsl::span<std::byte> data, std::ostream& os, std::ptrdiff_t width) {
-	auto start = data.begin();
-	auto end = data.end();
+	const auto start = data.begin();
+	const auto end = data.end();
 	auto line = start;
 	while(line != end) {
 		os.width(4);
@@ -63,14 +61,14 @@ void hex_dump(gsl::span<std::byte> data, std::ostream& os, std::ptrdiff_t width)
 		os << std::hex << line - start << ": ";
 		const std::ptrdiff_t line_length = std::min(width, end - line);
 		for(auto next = line; next != end && next != line + width; ++next) {
-			std::uint8_t ch = static_cast<std::uint8_t>(*next);
-			os << ((ch < 32 || ch > 127) ? '.' : static_cast<char>(ch));
+			const char ch = static_cast<char>(*next);
+			os << (ch < 32) ? '.' : ch;
 		}
 		if(line_length != width) {
-			os << std::string(width - line_length, ' ');
+			os << std::string(gsl::narrow_cast<std::size_t>(width - line_length), ' ');
 		}
 		for(auto next = line; next != end && next != line + width; ++next) {
-			std::uint8_t ch = static_cast<std::uint8_t>(*next);
+			const char ch = static_cast<char>(*next);
 			os << " ";
 			os.width(2);
 			os.fill('0');
@@ -104,14 +102,6 @@ struct SYSTEM_MODULE_INFORMATION
 };
 #pragma warning(pop)
 
-struct module_deleter
-{
-	using pointer = HMODULE;
-	void operator()(pointer mod) noexcept {
-		::FreeLibrary(mod);
-	}
-};
-
 int main() {
 	decltype(NtQuerySystemInformation)* ntQuerySystemInformation = reinterpret_cast<decltype(NtQuerySystemInformation)*>(
 	                                                               reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtQuerySystemInformation")));
@@ -126,7 +116,9 @@ int main() {
 	void* const kernel_base = mi->Modules[0].ImageBase;
 	const ULONG kernel_size = mi->Modules[0].ImageSize;
 
-	std::unique_ptr<HMODULE, module_deleter> ntoskrnl(::LoadLibraryW(L"ntoskrnl.exe"));
+	HMODULE ntoskrnl(::LoadLibraryW(L"ntoskrnl.exe"));
+	auto f = gsl::finally([=]() { ::FreeLibrary(ntoskrnl); });
+
 	void* const target = kernel_base;
 	const std::uint64_t bytes_to_leak = 64;
 
@@ -138,7 +130,7 @@ int main() {
 	std::cout << "Leaked:" << std::endl;
 	hex_dump(gsl::make_span(buffer.get(), bytes_to_leak), std::cout, 16);
 	std::cout << "Actual:" << std::endl;
-	hex_dump(gsl::make_span(reinterpret_cast<std::byte*>(ntoskrnl.get()), bytes_to_leak), std::cout, 16);
+	hex_dump(gsl::make_span(reinterpret_cast<std::byte*>(ntoskrnl), bytes_to_leak), std::cout, 16);
 
 	return 0;
 }

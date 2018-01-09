@@ -80,13 +80,10 @@
 #include <string>
 #include <algorithm>
 #include <iostream>
-#include <vector>
-#include <cassert>
-#include <variant>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <memory>
+#include <gsl/gsl>
 
 // disable additionally for boost
 #pragma warning(push)
@@ -97,8 +94,6 @@
 #ifndef BOOST_CONFIG_SUPPRESS_OUTDATED_MESSAGE
 #define BOOST_CONFIG_SUPPRESS_OUTDATED_MESSAGE
 #endif
-
-#include <boost/algorithm/string.hpp>
 
 #pragma warning(pop)
 
