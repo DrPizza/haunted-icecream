@@ -3,6 +3,22 @@
 
 #include <SDKDDKVer.h>
 
+#if !defined(_STL_EXTRA_DISABLED_WARNINGS)
+#define _STL_EXTRA_DISABLED_WARNINGS 4061 4324 4365 4514 4571 4582 4583 4623 4625 4626 4710 4774 4820 4987 5026 5027 5039
+#endif
+
+#if !defined(_SCL_SECURE_NO_WARNINGS)
+#define _SCL_SECURE_NO_WARNINGS 1
+#endif
+
+#if !defined(_CRT_SECURE_NO_WARNINGS)
+#define _CRT_SECURE_NO_WARNINGS 1
+#endif
+
+#if !defined(_SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING)
+#define _SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING 1
+#endif
+
 #define STRICT
 #define NOMINMAX
 
@@ -21,18 +37,6 @@
 #include <Winternl.h>
 #include <ntstatus.h>
 #pragma warning(pop)
-
-#if !defined(_STL_EXTRA_DISABLED_WARNINGS)
-#define _STL_EXTRA_DISABLED_WARNINGS 4061 4324 4365 4514 4571 4582 4583 4623 4625 4626 4710 4774 4820 4987 5026 5027 5039
-#endif
-
-#if !defined(_SCL_SECURE_NO_WARNINGS)
-#define _SCL_SECURE_NO_WARNINGS 1
-#endif
-
-#if !defined(_SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING)
-#define _SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING 1
-#endif
 
 // disable for everything
 #pragma warning(disable: 4324) // warning C4234: structure was padded due to alignment specifier
@@ -84,6 +88,7 @@
 #include <utility>
 #include <memory>
 #include <gsl/gsl>
+#include <cstdlib>
 
 // disable additionally for boost
 #pragma warning(push)

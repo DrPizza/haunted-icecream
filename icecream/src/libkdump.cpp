@@ -11,6 +11,7 @@
 #include <sdkddkver.h>
 #include <Windows.h>
 
+// seriously...
 #undef ERROR
 
 #include <vector>
@@ -124,6 +125,14 @@ static __forceinline int flush_reload(void *ptr) {
 	return 0;
 }
 
+static __forceinline unsigned int xbegin(void) {
+	return _xbegin();
+}
+
+static __forceinline void xend(void) {
+	_xend();
+}
+
 static void nopthread() {
 	while(!end_threads) {
 		_mm_pause();
@@ -145,14 +154,6 @@ static void yieldthread() {
 	while(!end_threads) {
 		SwitchToThread();
 	}
-}
-
-static __forceinline unsigned int xbegin(void) {
-	return _xbegin();
-}
-
-static __forceinline void xend(void) {
-	_xend();
 }
 
 enum cpuid : int32_t
