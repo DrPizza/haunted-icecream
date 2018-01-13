@@ -4,6 +4,10 @@
 #include <cstddef>
 #include <array>
 
+#if defined(ERROR)
+#undef ERROR
+#endif
+
 namespace kdump {
 
 	enum fault_handling_t
@@ -17,6 +21,11 @@ namespace kdump {
 		NOP,
 		IO,
 		YIELD
+	};
+
+	enum debug_level_t
+	{
+		NONE, ERROR, INFO, SUCCESS
 	};
 
 	struct config_t
@@ -34,7 +43,7 @@ namespace kdump {
 	config_t libkdump_get_autoconfig();
 	std::array<std::byte, 1> libkdump_read(std::size_t addr);
 	int libkdump_cleanup();
-	void libkdump_enable_debug(bool enable);
+	void libkdump_enable_debug(debug_level_t level);
 }
 
 #endif

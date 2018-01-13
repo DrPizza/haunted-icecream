@@ -12,7 +12,9 @@
 #include <Windows.h>
 
 // seriously...
+#if defined(ERROR)
 #undef ERROR
+#endif
 
 #include <vector>
 #include <thread>
@@ -27,7 +29,7 @@ namespace kdump {
 	static std::vector<std::thread> load_threads;
 	static std::atomic<std::size_t> end_threads;
 	static size_t phys = 0;
-	static bool dbg = 0;
+	static debug_level_t dbg = NONE;
 
 	constexpr std::size_t probe_count = 0x100;
 	constexpr std::size_t page_size = 0x1000;
@@ -70,18 +72,14 @@ namespace kdump {
 #define MELTDOWN meltdown_nonull()
 #endif
 
-	enum debug_level_t
-	{
-		ERR, INFO, SUCCESS
-	};
-
-	static void debug(debug_level_t symbol, const char *fmt, ...) {
-		if(!dbg) {
+	static void debug(debug_level_t level, const char *fmt, ...) {
+		if(level > dbg) {
 			return;
 		}
-
-		switch(symbol) {
-		case ERR:
+		switch(level) {
+		case NONE:
+			return;
+		case ERROR:
 			printf("\x1b[31;1m[-]\x1b[0m ");
 			break;
 		case INFO:
@@ -231,14 +229,14 @@ namespace kdump {
 		config.retries = 10000;
 	}
 
-	static int check_config() {
+	static bool check_config() {
 		if(config.cache_miss_threshold <= 0) {
 			detect_flush_reload_threshold();
 		}
 		if(config.cache_miss_threshold <= 0) {
-			return -1;
+			return false;
 		}
-		return 0;
+		return true;
 	}
 
 	config_t libkdump_get_autoconfig() {
@@ -252,9 +250,7 @@ namespace kdump {
 			set_auto_config();
 		}
 
-		int err = check_config();
-		if(err != 0) {
-			errno = err;
+		if(!check_config()) {
 			return false;
 		}
 
@@ -286,7 +282,7 @@ namespace kdump {
 		}
 
 		debug(SUCCESS, "Started %d load threads\n", config.load_threads);
-
+		debug(SUCCESS, "libkdump initialized\n");
 		return true;
 	}
 
@@ -300,8 +296,8 @@ namespace kdump {
 		return 0;
 	}
 
-	void libkdump_enable_debug(bool enable) {
-		dbg = enable;
+	void libkdump_enable_debug(debug_level_t level) {
+		dbg = level;
 	}
 
 	static std::size_t __forceinline read_value() {
@@ -360,7 +356,6 @@ namespace kdump {
 		std::uint8_t res_stat[probe_count];
 		std::memset(&res_stat[0], 0, probe_count);
 
-		std::size_t r;
 		for(std::size_t i = 0; i < config.measurements; i++) {
 			const std::size_t r = config.fault_handling == TSX ? read_tsx()
 			                                                   : read_seh();
@@ -368,6 +363,14 @@ namespace kdump {
 		}
 		std::size_t max_v = 0;
 		std::byte max_i{ 0 };
+
+		if(dbg) {
+			for(int i = 0; i < sizeof(res_stat); i++) {
+				if(res_stat[i] != 0) {
+					debug(INFO, "res_stat[%x] = %d\n", i, res_stat[i]);
+				}
+			}
+		}
 
 		for(std::size_t i = 1; i < probe_count; ++i) {
 			if(res_stat[i] > max_v && res_stat[i] >= config.accept_after) {

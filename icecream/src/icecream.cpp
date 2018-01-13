@@ -23,6 +23,7 @@ void hex_dump(HANDLE output, void* base_address, const It start, const It end) {
 		COORD end_of_line = csbi.dwCursorPosition;
 		end_of_line.X += width * 3 + width;
 		::SetConsoleCursorPosition(output, end_of_line);
+		::WriteConsoleA(output, "\r\n", 2, &chars_written, nullptr);
 
 		std::string line_buffer(width * 3 + width, ' ');
 		std::size_t hex_offset = 0;
@@ -38,7 +39,6 @@ void hex_dump(HANDLE output, void* base_address, const It start, const It end) {
 
 			::WriteConsoleOutputCharacterA(output, line_buffer.data(), static_cast<DWORD>(line_buffer.size()), csbi.dwCursorPosition, &chars_written);
 		}
-		::WriteConsoleA(output, "\r\n", 2, &chars_written, nullptr);
 	}
 }
 
@@ -137,7 +137,7 @@ int main(int argc, char* argv[]) {
 	mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
 	::SetConsoleMode(output, mode);
 
-	kdump::libkdump_enable_debug(1);
+	kdump::libkdump_enable_debug(kdump::SUCCESS);
 	kdump::config_t config = kdump::libkdump_get_autoconfig();
 	config.load_threads = 1;
 	config.load_type = kdump::NOP;
