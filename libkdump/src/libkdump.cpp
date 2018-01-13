@@ -21,7 +21,6 @@
 #include <gsl/gsl>
 
 namespace kdump {
-
 	config_t libkdump_auto_config = { 0 };
 
 	static std::byte* mem = nullptr;
@@ -71,12 +70,12 @@ namespace kdump {
 #define MELTDOWN meltdown_nonull()
 #endif
 
-	enum d_sym_t
+	enum debug_level_t
 	{
 		ERR, INFO, SUCCESS
 	};
 
-	static void debug(d_sym_t symbol, const char *fmt, ...) {
+	static void debug(debug_level_t symbol, const char *fmt, ...) {
 		if(!dbg) {
 			return;
 		}
@@ -247,7 +246,7 @@ namespace kdump {
 		return config;
 	}
 
-	int libkdump_init(const config_t configuration) {
+	bool libkdump_init(const config_t configuration) {
 		config = configuration;
 		if(memcmp(&config, &libkdump_auto_config, sizeof(config_t)) == 0) {
 			set_auto_config();
@@ -256,12 +255,12 @@ namespace kdump {
 		int err = check_config();
 		if(err != 0) {
 			errno = err;
-			return -1;
+			return false;
 		}
 
 		mem = static_cast<std::byte*>(::VirtualAlloc(nullptr, page_size * probe_count, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 		if(!mem) {
-			return -1;
+			return false;
 		}
 		std::memset(mem, 0xab, page_size * probe_count);
 
@@ -288,7 +287,7 @@ namespace kdump {
 
 		debug(SUCCESS, "Started %d load threads\n", config.load_threads);
 
-		return 0;
+		return true;
 	}
 
 	int libkdump_cleanup() {
@@ -359,17 +358,12 @@ namespace kdump {
 		phys = addr;
 
 		std::uint8_t res_stat[probe_count];
-		for(std::size_t i = 0; i < probe_count; ++i) {
-			res_stat[i] = 0ui8;
-		}
+		std::memset(&res_stat[0], 0, probe_count);
 
 		std::size_t r;
 		for(std::size_t i = 0; i < config.measurements; i++) {
-			if(config.fault_handling == TSX) {
-				r = read_tsx();
-			} else {
-				r = read_seh();
-			}
+			const std::size_t r = config.fault_handling == TSX ? read_tsx()
+			                                                   : read_seh();
 			res_stat[r]++;
 		}
 		std::size_t max_v = 0;

@@ -30,7 +30,7 @@ namespace kdump {
 		std::size_t retries;
 	};
 
-	int libkdump_init(const config_t configuration);
+	bool libkdump_init(const config_t configuration);
 	config_t libkdump_get_autoconfig();
 	std::array<std::byte, 1> libkdump_read(std::size_t addr);
 	int libkdump_cleanup();

