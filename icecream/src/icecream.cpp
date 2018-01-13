@@ -137,7 +137,7 @@ int main(int argc, char* argv[]) {
 	mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
 	::SetConsoleMode(output, mode);
 
-	kdump::libkdump_enable_debug(kdump::SUCCESS);
+	kdump::libkdump_enable_debug(kdump::ERROR);
 	kdump::config_t config = kdump::libkdump_get_autoconfig();
 	config.load_threads = 1;
 	config.load_type = kdump::NOP;
