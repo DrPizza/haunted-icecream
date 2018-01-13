@@ -39,7 +39,7 @@ namespace kdump {
 
 	retry:
 		byte = *(volatile uint8_t*)phys;
-		byte <<= 12;
+		byte *= page_size;
 		if(byte == 0) goto retry;
 
 		*(volatile uint64_t*)(mem + byte);
@@ -49,7 +49,7 @@ namespace kdump {
 		uint64_t byte;
 
 		byte = *(volatile uint8_t*)phys;
-		byte <<= 12;
+		byte *= page_size;
 		*(volatile uint64_t*)(mem + byte);
 	}
 
@@ -60,7 +60,7 @@ namespace kdump {
 		*(volatile uint64_t*)0;
 
 		byte = *(volatile uint8_t*)phys;
-		byte <<= 12;
+		byte *= page_size;
 		if(byte == 0) goto retry;
 
 		*(volatile uint64_t*)(mem + byte);

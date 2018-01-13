@@ -20,6 +20,9 @@ void hex_dump(HANDLE output, void* base_address, const It start, const It end) {
 		::WriteConsoleA(output, line_header.data(), static_cast<DWORD>(line_header.size()), &chars_written, nullptr);
 		CONSOLE_SCREEN_BUFFER_INFO csbi = { sizeof(CONSOLE_SCREEN_BUFFER_INFO) };
 		::GetConsoleScreenBufferInfo(output, &csbi);
+		COORD end_of_line = csbi.dwCursorPosition;
+		end_of_line.X += width * 3 + width;
+		::SetConsoleCursorPosition(output, end_of_line);
 
 		std::string line_buffer(width * 3 + width, ' ');
 		std::size_t hex_offset = 0;
@@ -35,9 +38,6 @@ void hex_dump(HANDLE output, void* base_address, const It start, const It end) {
 
 			::WriteConsoleOutputCharacterA(output, line_buffer.data(), static_cast<DWORD>(line_buffer.size()), csbi.dwCursorPosition, &chars_written);
 		}
-		COORD end_of_line = csbi.dwCursorPosition;
-		end_of_line.X += width * 3 + width;
-		::SetConsoleCursorPosition(output, end_of_line);
 		::WriteConsoleA(output, "\r\n", 2, &chars_written, nullptr);
 	}
 }
